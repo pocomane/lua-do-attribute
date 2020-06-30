@@ -421,7 +421,7 @@ static void markupval (FuncState *fs, int level) {
 ** this upvalue into all intermediate functions. If it is a global, set
 ** 'var' as 'void' as a flag.
 */
-static void singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
+static void singlevaraux (LexState *ls, FuncState *fs, TString *n, expdesc *var, int base) { /* PATCH */
   if (fs == NULL)  /* no more levels? */
     init_exp(var, VVOID, 0);  /* default is global */
   else {
@@ -431,9 +431,10 @@ static void singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
         markupval(fs, var->u.var.vidx);  /* local will be used as an upval */
     }
     else {  /* not found as local at current level; try upvalues */
+      if (ls->compilemode == DOATTRIB_LOCALONLY) luaX_syntaxerror(ls, "non local name in a protected block"); /* does not return - PATCH */
       int idx = searchupvalue(fs, n);  /* try existing upvalues */
       if (idx < 0) {  /* not found? */
-        singlevaraux(fs->prev, n, var, 0);  /* try upper levels */
+        singlevaraux(ls, fs->prev, n, var, 0);  /* try upper levels - do_attrib_patch */
         if (var->k == VLOCAL || var->k == VUPVAL)  /* local or upvalue? */
           idx  = newupvalue(fs, n, var);  /* will be a new upvalue */
         else  /* it is a global or a constant */
@@ -445,21 +446,27 @@ static void singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
 }
 
 
+
+static void findvariable (LexState *ls, TString *varname, expdesc *var) {
+  FuncState *fs = ls->fs;
+  singlevaraux(ls, fs, varname, var, 1); /* PATCH */
+  if (var->k == VVOID) {  /* global name? */
+    if (ls->compilemode != DOATTRIB_AUTOGLOBAL) luaX_syntaxerror(ls, "free name found in a protected block"); /* does not return - PATCH */
+    expdesc key;
+    singlevaraux(ls, fs, ls->envn, var, 1);  /* get environment variable */
+    lua_assert(var->k != VVOID);  /* this one must exist */
+    codestring(&key, varname);  /* key is variable name */
+    luaK_indexed(fs, var, &key);  /* env[varname] */
+  }
+}
+
 /*
 ** Find a variable with the given name 'n', handling global variables
 ** too.
 */
 static void singlevar (LexState *ls, expdesc *var) {
   TString *varname = str_checkname(ls);
-  FuncState *fs = ls->fs;
-  singlevaraux(fs, varname, var, 1);
-  if (var->k == VVOID) {  /* global name? */
-    expdesc key;
-    singlevaraux(fs, ls->envn, var, 1);  /* get environment variable */
-    lua_assert(var->k != VVOID);  /* this one must exist */
-    codestring(&key, varname);  /* key is variable name */
-    luaK_indexed(fs, var, &key);  /* env[varname] */
-  }
+  return findvariable(ls, varname, var); /* PATCH */
 }
 
 
@@ -1733,7 +1740,7 @@ static int getlocalattribute (LexState *ls) {
     checknext(ls, '>');
     if (strcmp(attr, "const") == 0)
       return RDKCONST;  /* read-only variable */
-    else if (strcmp(attr, "close") == 0)
+    else if (strcmp(attr, "close") == 0) /* PATCH */
       return RDKTOCLOSE;  /* to-be-closed variable */
     else
       luaK_semerror(ls,
@@ -1741,6 +1748,28 @@ static int getlocalattribute (LexState *ls) {
   }
   return VDKREG;  /* regular variable */
 }
+
+
+static int getdoattribute (LexState *ls) { /* PATCH */
+  /* ATTRIB -> ['<' Name '>'] */
+  if (testnext(ls, '<')) {
+    const char *attr = getstr(str_checkname(ls));
+    checknext(ls, '>');
+    if (0); /* PATCH */
+    else if (strcmp(attr, "autoglobal") == 0) /* PATCH */
+      return DOATTRIB_AUTOGLOBAL;  /* default do/end mode, allow upvalues and globals - PATCH */
+    else if (strcmp(attr, "withupvalue") == 0) /* PATCH */
+      return DOATTRIB_WITHUPVALUE;  /* forbid globals - PATCH */
+    else if (strcmp(attr, "localonly") == 0) /* PATCH */
+      return DOATTRIB_LOCALONLY;  /* forbid upvales and globals - PATCH */
+    else if (strcmp(attr, "defer") == 0) /* PATCH */
+      return DOATTRIB_DEFER;  /* evaluate at end of the scope - PATCH */
+    else
+      luaK_semerror(ls,
+        luaO_pushfstring(ls->L, "unknown attribute '%s'", attr)); /* PATCH */
+  } /* PATCH */
+  return VDKREG; /* PATCH */
+} /* PATCH */
 
 
 static void checktoclose (LexState *ls, int level) {
@@ -1765,6 +1794,7 @@ static void localstat (LexState *ls) {
   do {
     vidx = new_localvar(ls, str_checkname(ls));
     kind = getlocalattribute(ls);
+    if (kind != RDKCONST && kind != RDKTOCLOSE && kind != VDKREG) luaX_syntaxerror(ls, "attribute not allowed for a local variable declaration"); /* does not return - PATCH */
     getlocalvardesc(fs, vidx)->vd.kind = kind;
     if (kind == RDKTOCLOSE) {  /* to-be-closed? */
       if (toclose != -1)  /* one already present? */
@@ -1871,7 +1901,47 @@ static void retstat (LexState *ls) {
 }
 
 
+
+/* PATCH */
+static void adddeferblock(LexState *ls) {
+
+  /* Get defer function from the env */
+  TString * varname = luaX_newstring(ls, "defer",strlen("defer"));
+  expdesc defer;
+  findvariable(ls, varname, &defer);
+  luaK_exp2anyreg(ls->fs,&defer);
+
+  /* Create a function to pass to defer */
+  expdesc b;
+  FuncState new_fs;
+  BlockCnt bl;
+  new_fs.f = addprototype(ls);
+  new_fs.f->linedefined = ls->linenumber;
+  open_func(ls, &new_fs, &bl);
+  statlist(ls);
+  new_fs.f->lastlinedefined = ls->linenumber;
+  check_match(ls, TK_END, TK_FUNCTION, ls->linenumber);
+  codeclosure(ls, &b);
+  close_func(ls);
+  luaK_fixline(ls->fs, ls->linenumber);
+
+  /* Call defer function */
+  luaK_codeABC(ls->fs, OP_CALL, defer.u.info, 2, 2);
+
+  /* Lock the register allocating new local variables */
+  int varreg = ls->fs->nactvar;
+  const char auxnm[] = "(close-aux)";
+  new_localvar(ls, luaX_newstring(ls, auxnm, sizeof(auxnm)-1));
+  adjustlocalvars(ls, 1);
+  markupval(ls->fs, luaY_nvarstack(ls->fs));
+
+  // Generate To-Be-Closed handling opcode
+  luaK_codeABC(ls->fs, OP_TBC, varreg, 0, 0);
+}
+
+
 static void statement (LexState *ls) {
+  int oldcompilemode; /* PATCH */
   int line = ls->linenumber;  /* may be needed for error messages */
   enterlevel(ls);
   switch (ls->t.token) {
@@ -1889,8 +1959,17 @@ static void statement (LexState *ls) {
     }
     case TK_DO: {  /* stat -> DO block END */
       luaX_next(ls);  /* skip DO */
-      block(ls);
-      check_match(ls, TK_END, TK_DO, line);
+      oldcompilemode = ls->compilemode; /* PATCH */
+      int kind = getdoattribute(ls); /* PATCH */
+      if (kind == DOATTRIB_DEFER) { /* PATCH */
+        adddeferblock(ls); /* PATCH */
+      } else { /* PATCH */
+        ls->compilemode = kind; /* PATCH */
+        if (kind == VDKREG) ls->compilemode = oldcompilemode; /* PATCH */
+        block(ls);
+        ls->compilemode = oldcompilemode; /* PATCH */
+        check_match(ls, TK_END, TK_DO, line);
+      } /* PATCH */
       break;
     }
     case TK_FOR: {  /* stat -> forstat */
@@ -1971,6 +2050,7 @@ static void mainfunc (LexState *ls, FuncState *fs) {
 LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
                        Dyndata *dyd, const char *name, int firstchar) {
   LexState lexstate;
+  lexstate.compilemode = DOATTRIB_AUTOGLOBAL; /* default mode for the main chunk - PATCH */
   FuncState funcstate;
   LClosure *cl = luaF_newLclosure(L, 1);  /* create main closure */
   setclLvalue2s(L, L->top, cl);  /* anchor it (to avoid being collected) */

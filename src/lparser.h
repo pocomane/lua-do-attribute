@@ -90,6 +90,10 @@ typedef struct expdesc {
 #define RDKCONST	1   /* constant */
 #define RDKTOCLOSE	2   /* to-be-closed */
 #define RDKCTC		3   /* compile-time constant */
+#define DOATTRIB_LOCALONLY		601   /* not really a variable - PATCH */
+#define DOATTRIB_WITHUPVALUE		602   /* not really a variable - PATCH */
+#define DOATTRIB_AUTOGLOBAL		603   /* not really a variable - PATCH */
+#define DOATTRIB_DEFER		604   /* not really a variable - PATCH */
 
 /* description of an active local variable */
 typedef union Vardesc {

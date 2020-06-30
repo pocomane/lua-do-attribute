@@ -481,6 +481,22 @@ static int luaB_tostring (lua_State *L) {
 }
 
 
+
+static int luaB_defer (lua_State *L) {
+  luaL_checktype(L, 1, LUA_TFUNCTION);
+  lua_createtable(L, 0, 0);
+  lua_insert(L, 1);
+  lua_createtable(L, 0, 0);
+  lua_insert(L, 1);
+  /* stack: 1.tab.new 2.tab.new 3.func.arg */
+  lua_setfield(L, 2, "__close");
+  lua_setmetatable(L, 1);
+  lua_settop(L, 1);
+  return 1;
+}
+
+
+
 static const luaL_Reg base_funcs[] = {
   {"assert", luaB_assert},
   {"collectgarbage", luaB_collectgarbage},
@@ -505,6 +521,7 @@ static const luaL_Reg base_funcs[] = {
   {"tostring", luaB_tostring},
   {"type", luaB_type},
   {"xpcall", luaB_xpcall},
+  {"defer", luaB_defer},
   /* placeholders */
   {LUA_GNAME, NULL},
   {"_VERSION", NULL},

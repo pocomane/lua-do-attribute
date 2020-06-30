@@ -19,7 +19,9 @@ local variables only are allowed)
 work again like the common do/end block
 
 The command
+
 > ./script/doattr_test.sh
+
 will download the official lua test suite, it will add some do attribute tests,
 and it will run them all.
 

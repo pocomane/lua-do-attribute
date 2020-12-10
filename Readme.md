@@ -1,7 +1,7 @@
 
 # Lua do-attibute
 
-This is a patched version of Lua 5.4.0. The original lua README was moved in
+This is a patched version of Lua 5.4.2. The original lua README was moved in
 doc/README: please refer to it for build instructions.
 
 The patch lets you to mark a do/end block in this way:

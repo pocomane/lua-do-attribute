@@ -1,10 +1,11 @@
 #!/bin/sh
 
-rm -fR test
+# rm -fR test
 mkdir test
 cd test || exit -1
+export PATH="$PWD/src:$PATH"
 
-curl --insecure "https://www.lua.org/tests/lua-5.4.0-tests.tar.gz" > test.tgz
+curl --insecure "https://www.lua.org/tests/lua-5.4.2-tests.tar.gz" > test.tgz
 tar -xzf test.tgz
 rm -fR test.tgz
 mv */ test_suite
@@ -23,7 +24,9 @@ cd src/test_suite/libs
 make
 cd ..
 
-../lua all.lua
+echo "PATH='$PATH'"
+echo "PWD='$PWD'"
+lua all.lua
 
 cd ..
 #rm -fR test
